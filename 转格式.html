@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>全格式音视频转换器</title>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <style>
+        :root { --primary: #2563eb; --bg: #f1f5f9; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); padding: 20px; color: #334155; }
+        .container { max-width: 700px; margin: 0 auto; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .drop-zone { border: 2px dashed #cbd5e1; border-radius: 12px; padding: 40px; text-align: center; cursor: pointer; transition: 0.3s; margin-bottom: 20px; }
+        .drop-zone:hover { border-color: var(--primary); background: #eff6ff; }
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        select, button { padding: 12px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .progress-container { display: none; margin-top: 20px; }
+        .progress-bar { height: 10px; background: #e2e8f0; border-radius: 5px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--primary); width: 0%; transition: 0.2s; }
+        #log { font-family: monospace; font-size: 11px; background: #1e293b; color: #f8fafc; padding: 15px; border-radius: 8px; margin-top: 20px; max-height: 150px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>🎬 全格式转换助手</h1>
+        <p>支持 视频 ⇄ 视频 | 视频 ⇄ 音频 | 音频 ⇄ 音频</p>
+    </div>
+
+    <div class="drop-zone" onclick="document.getElementById('fileInput').click()">
+        <p id="fileName">点击或拖拽文件到这里开始</p>
+        <input type="file" id="fileInput" hidden>
+    </div>
+
+    <div class="controls">
+        <div style="display: flex; flex-direction: column;">
+            <label>目标转换格式：</label>
+            <select id="formatSelect">
+                <optgroup label="常用视频">
+                    <option value="mp4">MP4 (H.264)</option>
+                    <option value="mkv">MKV</option>
+                    <option value="mov">MOV (Apple)</option>
+                    <option value="avi">AVI</option>
+                    <option value="gif">GIF (动图)</option>
+                </optgroup>
+                <optgroup label="音频格式">
+                    <option value="mp3">MP3</option>
+                    <option value="wav">WAV (无损)</option>
+                    <option value="m4a">M4A (AAC)</option>
+                    <option value="flac">FLAC (无损压缩)</option>
+                </optgroup>
+            </select>
+        </div>
+        <div style="display: flex; flex-direction: column; justify-content: flex-end;">
+            <button id="convertBtn" onclick="runConversion()">立即开始转换</button>
+        </div>
+    </div>
+
+    <div class="progress-container" id="progressArea">
+        <div style="display:flex; justify-content: space-between; margin-bottom: 5px;">
+            <span id="progressText">准备中...</span>
+            <span id="percent">0%</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+
+    <div id="log">日志: 引擎初始化就绪...</div>
+</div>
+
+<script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({
+        log: true,
+        progress: ({ ratio }) => {
+            const percentage = Math.round(ratio * 100);
+            document.getElementById('progressFill').style.width = percentage + '%';
+            document.getElementById('percent').innerText = percentage + '%';
+        }
+    });
+
+    const fileInput = document.getElementById('fileInput');
+    const logBox = document.getElementById('log');
+
+    function log(msg) {
+        logBox.innerHTML += `<div>> ${msg}</div>`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    fileInput.onchange = (e) => {
+        if(e.target.files[0]) document.getElementById('fileName').innerText = "已选择: " + e.target.files[0].name;
+    };
+
+    async function runConversion() {
+        const file = fileInput.files[0];
+        if (!file) return alert("请先选择文件！");
+
+        const targetFormat = document.getElementById('formatSelect').value;
+        const btn = document.getElementById('convertBtn');
+        const progressArea = document.getElementById('progressArea');
+        
+        btn.disabled = true;
+        progressArea.style.display = 'block';
+
+        try {
+            if (!ffmpeg.isLoaded()) {
+                log("正在加载转换引擎 (约30MB)，首次加载可能较慢...");
+                await ffmpeg.load();
+            }
+
+            const inputName = 'input_file';
+            const outputName = `output_file.${targetFormat}`;
+
+            log("正在读取文件并预处理...");
+            ffmpeg.FS('writeFile', inputName, await fetchFile(file));
+
+            log(`开始转换为 ${targetFormat.toUpperCase()}...`);
+            // 通用转换指令，FFmpeg 会根据后缀名自动匹配编码器
+            await ffmpeg.run('-i', inputName, outputName);
+
+            log("转换成功！正在导出文件...");
+            const data = ffmpeg.FS('readFile', outputName);
+            
+            const downloadUrl = URL.createObjectURL(new Blob([data.buffer], { type: `video/${targetFormat}` }));
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = `converted_file_${Date.now()}.${targetFormat}`;
+            a.click();
+            
+            log("✨ 任务完成，下载已启动！");
+        } catch (err) {
+            log("❌ 出错了: " + err.message);
+            console.error(err);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+</script>
+
+</body>
+</html>
